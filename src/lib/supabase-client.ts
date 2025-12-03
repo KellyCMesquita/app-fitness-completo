@@ -1,5 +1,5 @@
-// Cliente direto para API REST do Supabase usando a configuração de services.json
-import servicesConfig from '@/config/services.json';
+// Cliente direto para API REST do Supabase usando variáveis de ambiente
+'use client';
 
 // Types
 export interface SupabaseUser {
@@ -40,21 +40,58 @@ export interface SupabaseDiet {
   data?: string;
 }
 
-// Configuração do serviço
-const supabaseService = servicesConfig.services.find(s => s.id === 'supabase_service');
+// Configuração do Supabase a partir das variáveis de ambiente
+const getSupabaseConfig = () => {
+  // No client-side, as variáveis de ambiente são injetadas durante o build
+  const supabaseUrl = typeof window !== 'undefined' 
+    ? (window as any).__NEXT_PUBLIC_SUPABASE_URL__ || process.env.NEXT_PUBLIC_SUPABASE_URL
+    : process.env.NEXT_PUBLIC_SUPABASE_URL;
+    
+  const supabaseAnonKey = typeof window !== 'undefined'
+    ? (window as any).__NEXT_PUBLIC_SUPABASE_ANON_KEY__ || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
+    : process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
 
-if (!supabaseService) {
-  throw new Error('Configuração do Supabase não encontrada');
-}
+  if (!supabaseUrl || !supabaseAnonKey) {
+    console.warn('⚠️ Variáveis de ambiente do Supabase não configuradas. Configure em Configurações do Projeto.');
+    return null;
+  }
+
+  return {
+    baseUrl: `${supabaseUrl}/rest/v1/`,
+    headers: {
+      'apikey': supabaseAnonKey,
+      'Authorization': `Bearer ${supabaseAnonKey}`,
+      'Content-Type': 'application/json',
+      'Prefer': 'return=representation'
+    }
+  };
+};
 
 // Cliente Supabase REST
 class SupabaseRestClient {
   private baseUrl: string;
   private headers: Record<string, string>;
+  private isConfigured: boolean;
 
   constructor() {
-    this.baseUrl = supabaseService!.baseUrl;
-    this.headers = supabaseService!.headers;
+    const config = getSupabaseConfig();
+    
+    if (!config) {
+      this.isConfigured = false;
+      this.baseUrl = '';
+      this.headers = {};
+      return;
+    }
+
+    this.isConfigured = true;
+    this.baseUrl = config.baseUrl;
+    this.headers = config.headers;
+  }
+
+  private checkConfiguration() {
+    if (!this.isConfigured) {
+      throw new Error('Supabase não configurado. Configure as variáveis de ambiente NEXT_PUBLIC_SUPABASE_URL e NEXT_PUBLIC_SUPABASE_ANON_KEY.');
+    }
   }
 
   private async request<T>(
@@ -62,6 +99,8 @@ class SupabaseRestClient {
     method: string = 'GET',
     body?: any
   ): Promise<T> {
+    this.checkConfiguration();
+
     const options: RequestInit = {
       method,
       headers: this.headers,
@@ -71,25 +110,40 @@ class SupabaseRestClient {
       options.body = JSON.stringify(body);
     }
 
-    const response = await fetch(`${this.baseUrl}${url}`, options);
+    try {
+      const response = await fetch(`${this.baseUrl}${url}`, options);
 
-    if (!response.ok) {
-      const error = await response.text();
-      throw new Error(`Supabase API Error: ${error}`);
+      if (!response.ok) {
+        const errorText = await response.text();
+        let errorMessage = `Erro ${response.status}: ${response.statusText}`;
+        
+        try {
+          const errorJson = JSON.parse(errorText);
+          errorMessage = errorJson.message || errorJson.error || errorMessage;
+        } catch {
+          errorMessage = errorText || errorMessage;
+        }
+        
+        throw new Error(errorMessage);
+      }
+
+      // Para DELETE, pode não ter conteúdo
+      if (method === 'DELETE') {
+        return {} as T;
+      }
+
+      const data = await response.json();
+      return data;
+    } catch (error: any) {
+      console.error('Erro na requisição Supabase:', error);
+      throw error;
     }
-
-    // Para DELETE, pode não ter conteúdo
-    if (method === 'DELETE') {
-      return {} as T;
-    }
-
-    return response.json();
   }
 
   // ========== USUÁRIOS ==========
 
-  async createUser(userData: Omit<SupabaseUser, 'id' | 'created_at'>): Promise<SupabaseUser> {
-    return this.request<SupabaseUser>('users', 'POST', userData);
+  async createUser(userData: Omit<SupabaseUser, 'id' | 'created_at'>): Promise<SupabaseUser[]> {
+    return this.request<SupabaseUser[]>('users', 'POST', userData);
   }
 
   async getUserById(userId: number): Promise<SupabaseUser[]> {
@@ -99,8 +153,8 @@ class SupabaseRestClient {
   async updateUser(
     userId: number,
     userData: Partial<Omit<SupabaseUser, 'id' | 'created_at'>>
-  ): Promise<SupabaseUser> {
-    return this.request<SupabaseUser>(`users?id=eq.${userId}`, 'PATCH', userData);
+  ): Promise<SupabaseUser[]> {
+    return this.request<SupabaseUser[]>(`users?id=eq.${userId}`, 'PATCH', userData);
   }
 
   async deleteUser(userId: number): Promise<void> {
@@ -109,8 +163,8 @@ class SupabaseRestClient {
 
   // ========== PROGRESSO ==========
 
-  async addProgress(progressData: Omit<SupabaseProgress, 'id' | 'data'>): Promise<SupabaseProgress> {
-    return this.request<SupabaseProgress>('progresso', 'POST', progressData);
+  async addProgress(progressData: Omit<SupabaseProgress, 'id' | 'data'>): Promise<SupabaseProgress[]> {
+    return this.request<SupabaseProgress[]>('progresso', 'POST', progressData);
   }
 
   async getProgress(userId: number): Promise<SupabaseProgress[]> {
@@ -119,8 +173,8 @@ class SupabaseRestClient {
 
   // ========== TREINOS ==========
 
-  async addTraining(trainingData: Omit<SupabaseTraining, 'id' | 'data'>): Promise<SupabaseTraining> {
-    return this.request<SupabaseTraining>('treinos', 'POST', trainingData);
+  async addTraining(trainingData: Omit<SupabaseTraining, 'id' | 'data'>): Promise<SupabaseTraining[]> {
+    return this.request<SupabaseTraining[]>('treinos', 'POST', trainingData);
   }
 
   async getTrainings(userId: number): Promise<SupabaseTraining[]> {
@@ -129,8 +183,8 @@ class SupabaseRestClient {
 
   // ========== DIETAS ==========
 
-  async addDiet(dietData: Omit<SupabaseDiet, 'id' | 'data'>): Promise<SupabaseDiet> {
-    return this.request<SupabaseDiet>('dietas', 'POST', dietData);
+  async addDiet(dietData: Omit<SupabaseDiet, 'id' | 'data'>): Promise<SupabaseDiet[]> {
+    return this.request<SupabaseDiet[]>('dietas', 'POST', dietData);
   }
 
   async getDiets(userId: number): Promise<SupabaseDiet[]> {
@@ -153,6 +207,11 @@ class SupabaseRestClient {
     if (imc < 35) return 'Obesidade grau I';
     if (imc < 40) return 'Obesidade grau II';
     return 'Obesidade grau III';
+  }
+
+  // Verificar se está configurado
+  isReady(): boolean {
+    return this.isConfigured;
   }
 }
 

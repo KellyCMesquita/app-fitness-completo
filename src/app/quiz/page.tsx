@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -14,11 +14,14 @@ import {
 } from '@/components/ui/select';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { supabaseClient } from '@/lib/supabase-client';
-import { ArrowLeft, Loader2 } from 'lucide-react';
+import { ArrowLeft, Loader2, AlertCircle } from 'lucide-react';
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 
 export default function QuizPage() {
   const router = useRouter();
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [supabaseReady, setSupabaseReady] = useState(false);
   const [formData, setFormData] = useState({
     nome: '',
     idade: '',
@@ -28,15 +31,27 @@ export default function QuizPage() {
     nome_caneta: '',
   });
 
+  useEffect(() => {
+    // Verificar se Supabase está configurado
+    setSupabaseReady(supabaseClient.isReady());
+  }, []);
+
   const handleInputChange = (field: string, value: string) => {
     setFormData((prev) => ({ ...prev, [field]: value }));
+    setError(null); // Limpar erro ao digitar
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
+    setError(null);
 
     try {
+      // Verificar se Supabase está configurado
+      if (!supabaseClient.isReady()) {
+        throw new Error('Supabase não configurado. Configure as variáveis de ambiente nas Configurações do Projeto.');
+      }
+
       // Calcular IMC
       const peso = parseFloat(formData.peso);
       const altura = parseFloat(formData.altura);
@@ -65,15 +80,29 @@ export default function QuizPage() {
       const result = await supabaseClient.createUser(userData);
       
       // Salvar ID do usuário no localStorage
-      if (result && Array.isArray(result) && result[0]?.id) {
+      if (result && Array.isArray(result) && result.length > 0 && result[0]?.id) {
         localStorage.setItem('user_id', result[0].id.toString());
+        console.log('✅ Usuário criado com sucesso:', result[0]);
+        // Redirecionar para dashboard
+        router.push('/dashboard');
+      } else {
+        throw new Error('Erro ao criar usuário. Verifique se as tabelas foram criadas no Supabase.');
       }
-
-      // Redirecionar para dashboard
-      router.push('/dashboard');
-    } catch (error) {
+    } catch (error: any) {
       console.error('Erro ao criar usuário:', error);
-      alert('Erro ao salvar dados. Tente novamente.');
+      
+      // Mensagens de erro específicas
+      if (error.message?.includes('Supabase não configurado')) {
+        setError('⚠️ Configure o Supabase nas Configurações do Projeto para continuar.');
+      } else if (error.message?.includes('Unauthorized') || error.message?.includes('401')) {
+        setError('🔑 Credenciais do Supabase inválidas. Verifique suas chaves de API nas Configurações.');
+      } else if (error.message?.includes('relation') || error.message?.includes('does not exist')) {
+        setError('📊 Tabela "users" não encontrada no banco de dados. Crie a estrutura do banco primeiro.');
+      } else if (error.message?.includes('Network') || error.message?.includes('fetch')) {
+        setError('🌐 Erro de conexão. Verifique sua internet e as configurações do Supabase.');
+      } else {
+        setError(`❌ Erro ao salvar dados: ${error.message || 'Tente novamente.'}`);
+      }
     } finally {
       setLoading(false);
     }
@@ -90,6 +119,28 @@ export default function QuizPage() {
           <ArrowLeft className="w-4 h-4 mr-2" />
           Voltar
         </Button>
+
+        {/* Alerta de configuração do Supabase */}
+        {!supabaseReady && (
+          <Alert className="mb-6 bg-orange-50 border-orange-200">
+            <AlertCircle className="h-4 w-4 text-orange-600" />
+            <AlertTitle className="text-orange-800">Configuração Necessária</AlertTitle>
+            <AlertDescription className="text-orange-700">
+              Configure suas credenciais do Supabase nas Configurações do Projeto para salvar seus dados.
+            </AlertDescription>
+          </Alert>
+        )}
+
+        {/* Alerta de erro */}
+        {error && (
+          <Alert className="mb-6 bg-red-50 border-red-200">
+            <AlertCircle className="h-4 w-4 text-red-600" />
+            <AlertTitle className="text-red-800">Erro</AlertTitle>
+            <AlertDescription className="text-red-700">
+              {error}
+            </AlertDescription>
+          </Alert>
+        )}
 
         <Card className="shadow-2xl">
           <CardHeader>
@@ -202,13 +253,15 @@ export default function QuizPage() {
               <Button
                 type="submit"
                 className="w-full bg-gradient-to-r from-blue-600 to-green-600 hover:from-blue-700 hover:to-green-700 text-white"
-                disabled={loading}
+                disabled={loading || !supabaseReady}
               >
                 {loading ? (
                   <>
                     <Loader2 className="w-4 h-4 mr-2 animate-spin" />
                     Salvando...
                   </>
+                ) : !supabaseReady ? (
+                  'Configure o Supabase primeiro'
                 ) : (
                   'Enviar'
                 )}

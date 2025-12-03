@@ -196,6 +196,17 @@ const nextConfig: NextConfig = {
     optimizePackageImports: ['lucide-react', '@radix-ui/react-icons'],
   },
   
+  // Desabilitar webpack dev middleware para evitar erros de fetch
+  webpack: (config, { dev, isServer }) => {
+    if (dev && !isServer) {
+      config.watchOptions = {
+        poll: 1000,
+        aggregateTimeout: 300,
+      };
+    }
+    return config;
+  },
+  
   // Headers CORS para permitir acesso da plataforma Lasy
   async headers() {
     return [
